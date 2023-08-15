@@ -1,7 +1,11 @@
 package main
 
 import (
+	"html/template"
+	"io/ioutil"
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -13,10 +17,25 @@ func setupRouter() *gin.Engine {
 	// gin.DisableConsoleColor()
 	r := gin.Default()
 
-	// Ping test
-	r.GET("/ping", func(c *gin.Context) {
-		c.String(http.StatusOK, "pong")
-	})
+	if os.Getenv("DEBUG_ENABLED") == "true" {
+		// https://gin-gonic.com/docs/examples/html-rendering/
+		r.LoadHTMLFiles("html/index.html")
+		r.GET("/", func(c *gin.Context) {
+			c.HTML(200, "index.html", nil)
+		})
+		// https://gin-gonic.com/docs/examples/serving-static-files/
+		r.Static("/assets", "./html/assets")
+	} else {
+		t, err := loadTemplate()
+		if err != nil {
+			panic(err)
+		}
+		r.SetHTMLTemplate(t)
+		r.GET("/", func(c *gin.Context) {
+			c.HTML(200, "/html/index.html", nil)
+		})
+		r.GET("/assets/*filepath", StaticHandler)
+	}
 
 	// Get user value
 	r.GET("/user/:name", func(c *gin.Context) {
@@ -68,7 +87,62 @@ func setupRouter() *gin.Engine {
 }
 
 func main() {
+	// log.Println(os.Getenv("DEBUG_ENABLED"))
+
 	r := setupRouter()
 	// Listen and Server in 0.0.0.0:8080
 	r.Run(":8080")
+}
+
+func loadTemplate() (*template.Template, error) {
+	t := template.New("")
+	for name, file := range Assets.Files {
+		// log.Println("loadTemplate:", name)
+
+		// if file.IsDir() || !strings.HasSuffix(name, ".tmpl") {
+		// 	continue
+		// }
+
+		if strings.HasSuffix(name, ".svg") {
+			// log.Println("loadTemplate: skipped:", name)
+			continue
+		}
+
+		h, err := ioutil.ReadAll(file)
+		if err != nil {
+			return nil, err
+		}
+		t, err = t.New(name).Parse(string(h))
+		if err != nil {
+			return nil, err
+		}
+
+		// log.Println("loadTemplate: parsed:", name)
+	}
+	return t, nil
+}
+
+// XXX
+var assetsData = make(map[string][]byte)
+
+func StaticHandler(c *gin.Context) {
+	p := c.Param("filepath")
+	fixed := strings.Join([]string{"/html/assets", p}, "")
+	// log.Println("StaticHandler:", fixed)
+	_, ok := assetsData[fixed]
+	if !ok {
+		_, ok := Assets.Files[fixed]
+		if !ok {
+			return
+		}
+		data, err := ioutil.ReadAll(Assets.Files[fixed])
+		if err != nil {
+			return
+		}
+		assetsData[fixed] = data
+	}
+	data := assetsData[fixed]
+	// log.Println("StaticHandler: data len:", len(data))
+	c.Writer.Header().Set("Content-Type", "image/svg+xml")
+	c.Writer.Write(data)
 }
